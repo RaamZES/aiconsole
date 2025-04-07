@@ -258,7 +258,9 @@ async def _handle_accept_code_ws_message(connection: AICConnection, json: dict):
 
         agent_id = tool_call_location.message_group.actor_id.id
 
-        agent = project.get_project_agents().get_asset(agent_id)
+        # Get agent asynchronously
+        agents = project.get_project_agents()
+        agent = await agents.get_asset(agent_id)
 
         if agent is None:
             raise Exception(f"Agent with id {agent_id} not found")

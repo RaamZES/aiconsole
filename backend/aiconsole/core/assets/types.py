@@ -49,3 +49,4 @@ class Asset(EditableObject):
     default_status: AssetStatus = AssetStatus.ENABLED
     status: AssetStatus = AssetStatus.ENABLED
     override: bool
+    

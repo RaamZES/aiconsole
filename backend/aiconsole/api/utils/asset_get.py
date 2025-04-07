@@ -25,7 +25,7 @@ async def asset_get(request, asset_type: AssetType, asset_id: str, new_asset: Ca
         else:
             raise ValueError(f"Invalid asset type: {asset_type}")
 
-        agent = assets.get_asset(asset_id, location)
+        agent = await assets.get_asset(asset_id, location)
 
         if not agent:
             raise HTTPException(status_code=404, detail=f"{capitalize_first(asset_type)} not found")

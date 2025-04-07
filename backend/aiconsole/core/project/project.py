@@ -40,11 +40,11 @@ from aiconsole.core.settings.fs.settings_file_storage import SettingsFileStorage
 from aiconsole.core.settings.settings import settings
 
 if TYPE_CHECKING:
-    from aiconsole.core.assets import assets
+    from aiconsole.core.assets.assets import Assets
 
 
-_materials: "assets.Assets | None" = None
-_agents: "assets.Assets | None" = None
+_materials: "Assets | None" = None
+_agents: "Assets | None" = None
 _project_initialized = False
 
 
@@ -77,13 +77,13 @@ async def send_project_init(connection: AICConnection):
     )
 
 
-def get_project_materials() -> "assets.Assets":
+def get_project_materials() -> "Assets":
     if not _materials:
         raise ValueError("Project materials are not initialized")
     return _materials
 
 
-def get_project_agents() -> "assets.Assets":
+def get_project_agents() -> "Assets":
     if not _agents:
         raise ValueError("Project agents are not initialized")
     return _agents
@@ -98,11 +98,20 @@ async def close_project():
 
     await connection_manager().send_to_all(ProjectClosedServerMessage())
 
+
+async def open_project(path: Path, background_tasks: BackgroundTasks):
+    if not path.exists():
+        raise ValueError(f"Path {path} does not exist")
+
+    # Change cwd and import path
+    os.chdir(path)
+    sys.path[0] = str(path)
+
     settings().configure(SettingsFileStorage(project_path=None))
 
 
 async def reinitialize_project():
-    from aiconsole.core.assets import assets
+    from aiconsole.core.assets.assets import Assets
     from aiconsole.core.project.paths import (
         get_project_directory,
         get_project_directory_safe,
@@ -124,8 +133,8 @@ async def reinitialize_project():
 
     await add_to_recent_projects(project_dir)
 
-    _agents = assets.Assets(asset_type=AssetType.AGENT)
-    _materials = assets.Assets(asset_type=AssetType.MATERIAL)
+    _agents = Assets(asset_type=AssetType.AGENT)
+    _materials = Assets(asset_type=AssetType.MATERIAL)
 
     settings().configure(SettingsFileStorage(project_path=get_project_directory_safe()))
 

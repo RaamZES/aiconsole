@@ -16,20 +16,14 @@
 import datetime
 import logging
 
-import watchdog.events
-import watchdog.observers
-
 from aiconsole.api.websockets.connection_manager import connection_manager
 from aiconsole.api.websockets.server_messages import AssetsUpdatedServerMessage
-from aiconsole.core.assets.fs.delete_asset_from_fs import delete_asset_from_fs
-from aiconsole.core.assets.fs.move_asset_in_fs import move_asset_in_fs
-from aiconsole.core.assets.fs.project_asset_exists_fs import project_asset_exists_fs
-from aiconsole.core.assets.fs.save_asset_to_fs import save_asset_to_fs
+from aiconsole.core.assets.db.delete_asset_from_db import delete_asset_from_db
+from aiconsole.core.assets.db.save_asset_to_db import save_asset_to_db
+from aiconsole.core.assets.db.load_asset_from_db import load_asset_from_db
 from aiconsole.core.assets.types import Asset, AssetLocation, AssetStatus, AssetType
 from aiconsole.core.project import project
-from aiconsole.core.project.paths import get_project_assets_directory
 from aiconsole.core.settings.settings import settings
-from aiconsole.utils.BatchingWatchDogHandler import BatchingWatchDogHandler
 from aiconsole_toolkit.settings.partial_settings_data import PartialSettingsData
 
 _log = logging.getLogger(__name__)
@@ -45,18 +39,8 @@ class Assets:
         self.asset_type = asset_type
         self._assets = {}
 
-        self.observer = watchdog.observers.Observer()
-
-        get_project_assets_directory(asset_type).mkdir(parents=True, exist_ok=True)
-        self.observer.schedule(
-            BatchingWatchDogHandler(self.reload),
-            get_project_assets_directory(asset_type),
-            recursive=True,
-        )
-        self.observer.start()
-
     def stop(self):
-        self.observer.stop()
+        pass  # No need to stop observer for DB
 
     def all_assets(self) -> list[Asset]:
         """
@@ -72,109 +56,104 @@ class Assets:
             assets[0] for assets in self._assets.values() if self.get_status(self.asset_type, assets[0].id) == status
         ]
 
+    async def get_asset(self, asset_id: str, location: AssetLocation | None = None) -> Asset | None:
+        """
+        Get a single asset by ID and optional location.
+        If location is None, returns the first available asset with the given ID.
+        Returns None if asset is not found.
+        """
+        if asset_id not in self._assets:
+            # Try to load from DB if not in memory
+            try:
+                asset = await load_asset_from_db(self.asset_type, asset_id)
+                if asset.id not in self._assets:
+                    self._assets[asset.id] = []
+                self._assets[asset.id].append(asset)
+            except Exception as e:
+                _log.debug(f"Asset {asset_id} not found in database: {e}")
+                return None
+
+        if not self._assets[asset_id]:
+            return None
+
+        if location is None:
+            return self._assets[asset_id][0]
+
+        for asset in self._assets[asset_id]:
+            if asset.defined_in == location:
+                return asset
+
+        return None
+
     async def save_asset(self, asset: Asset, old_asset_id: str, create: bool):
         if asset.defined_in != AssetLocation.PROJECT_DIR and not create:
             raise Exception("Cannot save asset not defined in project.")
 
-        exists_in_project = project_asset_exists_fs(self.asset_type, asset.id)
-        old_exists = project_asset_exists_fs(self.asset_type, old_asset_id)
+        # In DB we can always create a new asset or update an existing one
+        new_asset = await save_asset_to_db(asset, old_asset_id)
 
-        if create and exists_in_project:
-            create = False
-
-        if not create and not exists_in_project:
-            raise Exception(f"Asset {asset.id} does not exist.")
-
-        rename = False
-        if create and old_asset_id and not exists_in_project and old_exists:
-            await move_asset_in_fs(asset.type, old_asset_id, asset.id)
-            Assets.rename_asset(asset.type, old_asset_id, asset.id)
-            rename = True
-
-        new_asset = await save_asset_to_fs(asset, old_asset_id)
-
-        if asset.id not in self._assets:
-            self._assets[asset.id] = []
-
-        # integrity checks and deleting old assets from structure
+        # If it's a new asset, create a new record in _assets
+        if create:
+            self._assets[new_asset.id] = []
+        
+        # If it's an update of an existing asset
         if not create:
-            if not self._assets[asset.id] or self._assets[asset.id][0].defined_in != AssetLocation.PROJECT_DIR:
-                raise Exception(f"Asset {asset.id} cannot be edited")
-            self._assets[asset.id].pop(0)
+            # Update existing asset
+            if old_asset_id in self._assets:
+                self._assets[old_asset_id] = []
+                self._assets[old_asset_id].insert(0, new_asset)
         else:
-            if self._assets[asset.id] and self._assets[asset.id][0].defined_in == AssetLocation.PROJECT_DIR:
-                raise Exception(f"Asset {asset.id} already exists")
+            # Add new asset
+            self._assets[new_asset.id].insert(0, new_asset)
 
-        self._assets[asset.id].insert(0, new_asset)
+        # Send notification that assets have been updated
+        await connection_manager().send_to_all(AssetsUpdatedServerMessage(
+            initial=False,
+            asset_type=self.asset_type,
+            count=len(self._assets)
+        ))
 
-        self._suppress_notification()
-
-        return rename
+        return False  # No rename needed for DB
 
     async def delete_asset(self, asset_id):
+        if asset_id not in self._assets:
+            raise KeyError(f"Asset {asset_id} not found")
+
         self._assets[asset_id].pop(0)
 
         if len(self._assets[asset_id]) == 0:
             del self._assets[asset_id]
 
-        delete_asset_from_fs(self.asset_type, asset_id)
+        await delete_asset_from_db(self.asset_type, asset_id)
 
-        self._suppress_notification()
+        # Send notification that assets have been updated
+        await connection_manager().send_to_all(AssetsUpdatedServerMessage(
+            initial=False,
+            asset_type=self.asset_type,
+            count=len(self._assets)
+        ))
 
     def _suppress_notification(self):
         self._suppress_notification_until = datetime.datetime.now() + datetime.timedelta(seconds=10)
 
-    def get_asset(self, id, location: AssetLocation | None = None):
-        """
-        Get a specific asset.
-        """
-        if id not in self._assets or len(self._assets[id]) == 0:
-            return None
-
-        for asset in self._assets[id]:
-            if location is None or asset.defined_in == location:
-                return asset
-
-        return None
-
     async def reload(self, initial: bool = False):
+        """
+        Reload all assets from the database.
+        """
         from aiconsole.core.assets.load_all_assets import load_all_assets
 
-        _log.info(f"Reloading {self.asset_type}s ...")
-
+        # Load all assets from DB
         self._assets = await load_all_assets(self.asset_type)
 
-        await connection_manager().send_to_all(
-            AssetsUpdatedServerMessage(
-                initial=(
-                    initial
-                    or not (
-                        not self._suppress_notification_until
-                        or self._suppress_notification_until < datetime.datetime.now()
-                    )
-                ),
-                asset_type=self.asset_type,
-                count=len(self._assets),
-            )
-        )
+        if not initial:
+            await connection_manager().send_to_all(AssetsUpdatedServerMessage())
 
     @staticmethod
     def get_status(asset_type: AssetType, id: str) -> AssetStatus:
-        s = settings().unified_settings
-
         if asset_type == AssetType.MATERIAL:
-            if id in s.materials:
-                return s.materials[id]
-            asset = project.get_project_materials().get_asset(id)
-            default_status = asset.default_status if asset else AssetStatus.ENABLED
-            return default_status
+            return settings().get_material_status(id)
         elif asset_type == AssetType.AGENT:
-            if id in s.agents:
-                return s.agents[id]
-            asset = project.get_project_agents().get_asset(id)
-            default_status = asset.default_status if asset else AssetStatus.ENABLED
-            return default_status
-
+            return settings().get_agent_status(id)
         else:
             raise ValueError(f"Unknown asset type {asset_type}")
 

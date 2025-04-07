@@ -15,7 +15,7 @@
 # limitations under the License.
 import logging
 from dataclasses import dataclass
-from typing import cast
+from typing import cast, Optional
 
 from aiconsole.consts import DIRECTOR_MIN_TOKENS, DIRECTOR_PREFERRED_TOKENS
 from aiconsole.core.assets.agents.agent import AICAgent
@@ -48,6 +48,7 @@ from aiconsole.core.gpt.types import (
     GPTRequestTextMessage,
 )
 from aiconsole.core.project import project
+from pydantic import BaseModel
 
 _log = logging.getLogger(__name__)
 
@@ -114,10 +115,16 @@ class AnalysisResult:
     is_final_step: bool
 
 
+class GPTAnalysisFunctionStep(BaseModel):
+    agent: AICAgent
+    material: Material
+    gpt_mode: str
+
+
 async def gpt_analysis_function_step(
     message_group_id: str,
     chat_mutator: ChatMutator,
-    gpt_mode: GPTMode,
+    gpt_mode: str,
     initial_system_prompt: str,
     last_system_prompt: str,
     force_call: bool,

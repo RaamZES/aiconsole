@@ -17,6 +17,7 @@
 import asyncio
 import logging
 import threading
+from typing import Callable
 
 import watchdog.events
 
@@ -24,11 +25,12 @@ _log = logging.getLogger(__name__)
 
 
 class BatchingWatchDogHandler(watchdog.events.FileSystemEventHandler):
-    def __init__(self, reload, extension=".toml"):
+    def __init__(self, reload: Callable[[], None], extension=".toml"):
         self.lock = threading.RLock()
         self.timer = None
         self.reload = reload
         self.extension = extension
+        self.loop = None
 
     def on_moved(self, event):
         return self.on_modified(event)
@@ -44,13 +46,21 @@ class BatchingWatchDogHandler(watchdog.events.FileSystemEventHandler):
             return
 
         with self.lock:
-
             def reload():
                 with self.lock:
                     if self.timer is not None:
                         self.timer.cancel()
                     self.timer = None
-                    asyncio.run(self.reload())
+                    try:
+                        # Get current event loop or create a new one
+                        try:
+                            self.loop = asyncio.get_event_loop()
+                        except RuntimeError:
+                            self.loop = asyncio.new_event_loop()
+                            asyncio.set_event_loop(self.loop)
+                        self.loop.run_until_complete(self.reload())
+                    except Exception as e:
+                        _log.error(f"Error during reload: {e}")
 
             if self.timer is None:
                 self.timer = threading.Timer(1.0, reload)

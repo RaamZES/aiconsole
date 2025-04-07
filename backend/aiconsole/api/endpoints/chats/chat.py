@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from fastapi import APIRouter, Response, status
-from send2trash import send2trash
+from aiconsole.core.db.chat_db_operations import delete_chat
 
 from aiconsole.core.chat.load_chat_history import load_chat_history
 from aiconsole.core.chat.save_chat_history import save_chat_history
@@ -25,14 +25,13 @@ router = APIRouter()
 
 @router.delete("/{chat_id}")
 async def delete_history(chat_id: str):
-    file_path = get_history_directory() / f"{chat_id}.json"
-    if file_path.exists():
-        send2trash(file_path)
+    try:
+        delete_chat(chat_id)
         return Response(
             status_code=status.HTTP_200_OK,
             content="Chat history deleted successfully",
         )
-    else:
+    except Exception as e:
         return Response(
             status_code=status.HTTP_404_NOT_FOUND,
             content="Chat history not found",
@@ -41,7 +40,7 @@ async def delete_history(chat_id: str):
 
 @router.get("/{chat_id}/path")
 async def get_history_path(chat_id: str):
-    return {"path": str(get_history_directory() / f"{chat_id}.json")}
+    return {"path": f"database://{chat_id}"}
 
 
 @router.patch("/{chat_id}")

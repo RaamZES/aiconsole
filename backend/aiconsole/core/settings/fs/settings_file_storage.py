@@ -35,8 +35,9 @@ class SettingsFileStorage(SettingsStorage):
         project_path: Path | None,
         disable_observer: bool = False,
     ):
-        self.observer = FileObserver()
-        self.change_project(project_path, disable_observer)
+        # Disable file tracking as we use DB
+        self.observer = None
+        self.change_project(project_path, disable_observer=True)
 
     @property
     def global_settings_file_path(self):
@@ -56,9 +57,9 @@ class SettingsFileStorage(SettingsStorage):
 
     def change_project(self, project_path: Optional[Path] = None, disable_observer: bool = False):
         self._project_settings_file_path = project_path / "settings.toml" if project_path else None
-
-        if not disable_observer:
-            self._start_observer()
+        # Disable file tracking as we use DB
+        # if not disable_observer:
+        #     self._start_observer()
 
     def save(self, settings_data: PartialSettingsData, to_global: bool):
         file_path = self.global_settings_file_path if to_global else self.project_settings_file_path
@@ -71,9 +72,5 @@ class SettingsFileStorage(SettingsStorage):
         await internal_events().emit(SettingsUpdatedEvent())
 
     def _start_observer(self):
-        file_paths = [self.global_settings_file_path]
-        if self.project_settings_file_path:
-            file_paths.append(self.project_settings_file_path)
-
-        if self.observer:
-            self.observer.start(file_paths=file_paths, on_changed=self._reload)
+        # Disable file tracking as we use DB
+        pass

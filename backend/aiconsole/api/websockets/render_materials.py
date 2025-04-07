@@ -38,9 +38,13 @@ async def render_materials(
                 _notify,
             )
 
-        relevant_materials = [
-            cast(Material, project.get_project_materials().get_asset(material_id)) for material_id in materials_ids
-        ]
+        # Get materials asynchronously
+        materials = project.get_project_materials()
+        relevant_materials = []
+        for material_id in materials_ids:
+            material = await materials.get_asset(material_id)
+            if material is not None:
+                relevant_materials.append(cast(Material, material))
 
         content_context = ContentEvaluationContext(
             chat=chat,

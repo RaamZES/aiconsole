@@ -46,6 +46,21 @@ async def acquire_lock(chat_id: str, request_id: str, skip_mutating_clients: boo
 
     if chat_id not in chats:
         chat_history = await load_chat_history(chat_id)
+        if chat_history is None:
+            # Create a new chat if it doesn't exist
+            from datetime import datetime
+            from aiconsole.core.chat.types import ChatOptions
+            chat_history = Chat(
+                id=chat_id,
+                name="New Chat",
+                title_edited=False,
+                last_modified=datetime.utcnow(),
+                agent_id=None,
+                is_analysis_in_progress=False,
+                chat_options=ChatOptions(),
+                message_groups=[],
+                lock_id=None
+            )
         chat_history.lock_id = None
         chats[chat_id] = chat_history
 
@@ -65,7 +80,23 @@ async def acquire_lock(chat_id: str, request_id: str, skip_mutating_clients: boo
 async def _read_chat_outside_of_lock(chat_id: str):
     _log.debug(f"Reading chat{chat_id}")
     if chat_id not in chats:
-        return await load_chat_history(chat_id)
+        chat = await load_chat_history(chat_id)
+        if chat is None:
+            # Create a new chat if it doesn't exist
+            from datetime import datetime
+            from aiconsole.core.chat.types import ChatOptions
+            chat = Chat(
+                id=chat_id,
+                name="New Chat",
+                title_edited=False,
+                last_modified=datetime.utcnow(),
+                agent_id=None,
+                is_analysis_in_progress=False,
+                chat_options=ChatOptions(),
+                message_groups=[],
+                lock_id=None
+            )
+        return chat
 
     return chats[chat_id]
 
@@ -102,6 +133,9 @@ class DefaultChatMutator(ChatMutator):
             )
 
         apply_mutation(self.chat, mutation)
+        
+        # Save changes to database after each mutation
+        save_chat_history(self.chat, scope="message_groups")
 
         await connection_manager().send_to_chat(
             NotifyAboutChatMutationServerMessage(

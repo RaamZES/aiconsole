@@ -23,18 +23,20 @@ async def asset_exists(asset_type: AssetType, request: Request, asset_id: str):
         else:
             raise ValueError(f"Invalid asset type: {asset_type}")
 
-        asset = assets.get_asset(asset_id, location)
+        asset = await assets.get_asset(asset_id, location)
 
         return JSONResponse({"exists": asset is not None})
 
 
-def asset_path(asset_type: AssetType, request: Request, asset_id: str):
+async def asset_path(asset_type: AssetType, request: Request, asset_id: str):
     if asset_type == AssetType.AGENT:
-        asset = project.get_project_agents().get_asset(asset_id)
+        assets = project.get_project_agents()
     elif asset_type == AssetType.MATERIAL:
-        asset = project.get_project_materials().get_asset(asset_id)
+        assets = project.get_project_materials()
     else:
         raise ValueError(f"Invalid asset type: {asset_type}")
+
+    asset = await assets.get_asset(asset_id)
 
     if asset is None:
         raise HTTPException(status_code=404, detail=f"Asset {asset_id} of type {asset_type} not found")
